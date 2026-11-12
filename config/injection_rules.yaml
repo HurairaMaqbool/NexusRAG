@@ -1,0 +1,65 @@
+# config/injection_rules.yaml — Regex and keyword signatures for prompt injection detection
+# Used by security/scanner.py to score retrieved chunks for indirect injection risk.
+# Each rule has a pattern (regex), description, and weight [0.0–1.0].
+
+rules:
+  # Direct instruction override attempts
+  - id: ignore_previous
+    pattern: "(?i)(ignore|disregard|forget|override|bypass)\\s+(all\\s+)?(previous|prior|above|earlier|system)\\s+(instructions?|prompts?|rules?|directives?)"
+    description: "Attempts to override system instructions"
+    weight: 0.85
+
+  - id: system_prompt_leak
+    pattern: "(?i)(show|reveal|display|print|output|repeat|echo)\\s+(me\\s+)?(the\\s+)?(system\\s+prompt|system\\s+message|initial\\s+instructions?|hidden\\s+instructions?|your\\s+instructions?)"
+    description: "Attempts to extract system prompt"
+    weight: 0.80
+
+  - id: role_override
+    pattern: "(?i)(you\\s+are\\s+now|act\\s+as|pretend\\s+(to\\s+be|you\\s+are)|assume\\s+the\\s+role|new\\s+role|switch\\s+to|roleplay\\s+as)"
+    description: "Role/persona hijacking attempt"
+    weight: 0.75
+
+  # Delimiter injection
+  - id: delimiter_injection_system
+    pattern: "(?i)(<\\/?system>|\\[\\/?INST\\]|\\[\\/?SYS\\]|<\\|im_start\\|>|<\\|im_end\\|>|<<SYS>>|<\\/SYS>)"
+    description: "LLM delimiter/tag injection"
+    weight: 0.90
+
+  - id: delimiter_injection_xml
+    pattern: "(?i)(<\\/?assistant>|<\\/?user>|<\\/?human>|<\\/?ai>|###\\s*(System|User|Assistant))"
+    description: "XML/markdown role delimiter injection"
+    weight: 0.80
+
+  # Data exfiltration attempts
+  - id: exfil_url
+    pattern: "(?i)(https?://|ftp://|data:)\\S{20,}"
+    description: "Potential data exfiltration via URL"
+    weight: 0.60
+
+  - id: exfil_encoding
+    pattern: "(?i)(base64|encode|decode|hex|rot13|atob|btoa)\\s*[:(]"
+    description: "Encoding-based obfuscation or exfiltration"
+    weight: 0.55
+
+  - id: exfil_markdown_image
+    pattern: "!\\[.*\\]\\(https?://\\S+\\)"
+    description: "Markdown image exfiltration vector"
+    weight: 0.65
+
+  # Command/code injection
+  - id: code_injection
+    pattern: "(?i)(exec|eval|import\\s+os|subprocess|__import__|os\\.system|os\\.popen)"
+    description: "Code/command injection attempt"
+    weight: 0.70
+
+  # Prompt leaking keywords
+  - id: prompt_leak_keywords
+    pattern: "(?i)(BEGIN\\s+HIDDEN|END\\s+HIDDEN|CONFIDENTIAL\\s+PROMPT|INTERNAL\\s+ONLY|DO\\s+NOT\\s+SHARE)"
+    description: "Markers suggesting prompt extraction payload"
+    weight: 0.50
+
+  # Jailbreak patterns
+  - id: jailbreak_dan
+    pattern: "(?i)(DAN\\s*mode|do\\s+anything\\s+now|jailbreak|developer\\s+mode|god\\s+mode|unrestricted\\s+mode)"
+    description: "Known jailbreak prompt patterns"
+    weight: 0.85

@@ -1,0 +1,39 @@
+# config/policy.yaml — Risk thresholds and role-based policy configuration
+# Authoritative policy settings for the Secure RAG Platform (Decisions D1-D18)
+
+security_mode: enhanced  # enhanced | baseline
+
+risk_thresholds:
+  review: 0.40   # RISK_THRESHOLD_REVIEW — scores >= this trigger REVIEW
+  block: 0.75    # RISK_THRESHOLD_BLOCK  — scores >= this trigger BLOCK
+
+enable_web_search: false  # Decision D3: OFF by default
+
+role_permissions:
+  employee:
+    allowed_access_levels: ["employee"]
+    can_use_calculator: true
+    can_use_web_search: false
+    can_view_audit_dashboard: false
+    can_ingest: false
+  hr:
+    allowed_access_levels: ["employee", "hr"]
+    can_use_calculator: true
+    can_use_web_search: true
+    can_view_audit_dashboard: false
+    can_ingest: true
+  admin:
+    allowed_access_levels: []   # Admin cannot query document text (D11)
+    can_use_calculator: false
+    can_use_web_search: false
+    can_view_audit_dashboard: true
+    can_ingest: false
+
+data_exfiltration_rules:
+  prohibit_restricted_chunks_to_cloud: true  # Decision D1: hr chunks NEVER sent to Groq
+  max_retrieved_chunks: 5
+
+# Notes on role mapping:
+# - employee → can read employee-level docs only
+# - hr       → can read employee + hr docs; sole ingestion role (D13)
+# - admin    → no document retrieval; audit dashboard access only (D11)

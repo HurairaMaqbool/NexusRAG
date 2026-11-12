@@ -1,11 +1,10 @@
 """
 qa_test_suite.py — Full automated QA test suite for Nexus AI
-Run with: python qa_test_suite.py
+Run with: python tests/qa_test_suite.py
 """
 import sys
 import os
 
-# Force UTF-8 output on Windows
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 PASS = "[PASS]"
@@ -16,6 +15,7 @@ print("  NEXUS AI -- SENIOR QA EXPERT TEST SUITE")
 print("=" * 60)
 
 results = []
+
 
 def check(name, condition, detail=""):
     status = PASS if condition else FAIL
@@ -30,7 +30,7 @@ def check(name, condition, detail=""):
 # MODULE 1: safe_eval (Calculator)
 # ─────────────────────────────────────────────────────────
 print("\n[ MODULE 1 ] Calculator / safe_eval")
-from rag_engine import safe_eval
+from secure_rag.tools.calculator import safe_eval
 
 check("Basic addition",         safe_eval("2 + 2") == 4)
 check("Multiplication",         safe_eval("10 * 5") == 50)
@@ -47,7 +47,7 @@ check("DoS guard (long expr)",  "long" in str(safe_eval("1+" * 200 + "1")).lower
 # MODULE 2: Intent Detection
 # ─────────────────────────────────────────────────────────
 print("\n[ MODULE 2 ] Intent Detection")
-from rag_engine import RAGSystem
+from secure_rag.agent.rag_system import RAGSystem
 rag = RAGSystem()
 
 intent_cases = [
@@ -76,7 +76,6 @@ print("\n[ MODULE 3 ] Document Parsing & Chunking")
 
 import tempfile
 
-# Test TXT parsing
 with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
     f.write("This is a test document. " * 100)
     txt_path = f.name
@@ -93,7 +92,6 @@ check("Each chunk has source_file",     all("source_file" in c for c in chunks))
 check("Chunk size <= 800 chars",        all(len(c["text"]) <= 800 for c in chunks))
 os.unlink(txt_path)
 
-# Test unsupported file type
 try:
     rag.parse_file("fake.xyz", "fake.xyz")
     check("Unsupported file type raises error", False, "Should have raised ValueError")
@@ -105,7 +103,7 @@ except ValueError:
 # ─────────────────────────────────────────────────────────
 print("\n[ MODULE 4 ] NumpyFlatL2 Vector Index")
 import numpy as np
-from rag_engine import NumpyFlatL2
+from secure_rag.retrieval.memory_index import NumpyFlatL2
 
 idx = NumpyFlatL2(4)
 check("Empty index: search returns empty",  idx.search(np.zeros((1,4), dtype="float32"), 5)[0].size == 0
@@ -141,13 +139,11 @@ check("Hybrid search returns results",      len(results_search) > 0)
 check("Results have text field",            all("text" in r for r in results_search))
 check("Results have source_file field",     all("source_file" in r for r in results_search))
 
-# Deduplication check
 texts = [r["text"] for r in results_search]
 import hashlib
 hashes = [hashlib.md5(t.encode()).hexdigest() for t in texts]
 check("No duplicate chunks returned",       len(hashes) == len(set(hashes)))
 
-# Empty search
 empty_results = rag2.hybrid_search("xyzzy gibberish 12345")
 check("Low-relevance query still returns results (BM25 fallback)", isinstance(empty_results, list))
 

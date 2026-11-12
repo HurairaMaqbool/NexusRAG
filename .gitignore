@@ -1,4 +1,17 @@
+# Environment & Secrets
 .env
-venv/
+
+# Database & Vector Storage
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/chroma/
+
+# Caches & Environments
 __pycache__/
+.pytest_cache/
+venv/
+.venv/
+*.egg-info/
 temp_uploads/
+test_run*.txt

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secure-rag"
+version = "2.0.0"
+description = "Secure RAG Platform — Hardened Knowledge Assistant"
+readme = "README.md"
+requires-python = ">=3.10"
+# Unpinned package declarations for distribution.
+# Authoritative single source of truth for exact deployment pins is requirements.txt.
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "streamlit",
+    "pydantic",
+    "pydantic-settings",
+    "bcrypt",
+    "chromadb",
+    "sentence-transformers",
+    "rank-bm25",
+    "numpy",
+    "pypdf",
+    "python-docx",
+    "PyYAML",
+    "python-dotenv",
+    "python-multipart",
+    "requests",
+    "httpx",
+    "langchain-groq",
+    "ddgs",
+    "pytest",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

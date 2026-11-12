@@ -1,0 +1,20 @@
+# Northwind Enterprise Employee Leave Policy (2026 Edition)
+
+## 1. Annual Paid Time Off (PTO)
+All full-time employees accrue 20 days of paid vacation per calendar year, accrued at the rate of 1.67 days per full month worked.
+A maximum of 5 unused PTO days may be carried over into the subsequent calendar year, expiring on March 31st.
+
+## 2. Sick and Medical Leave
+Employees receive 10 paid sick leave days annually, renewed on January 1st.
+Absences exceeding 3 consecutive business days require formal documentation from a licensed healthcare provider submitted to People Operations.
+
+## 3. Parental Leave
+Primary caregivers are eligible for 16 weeks of fully paid parental leave following the birth, adoption, or foster placement of a child.
+Secondary caregivers are eligible for 8 weeks of fully paid leave.
+
+## 4. Bereavement and Compassionate Leave
+Up to 5 days of paid bereavement leave is granted for immediate family members, and up to 3 days for extended family.
+
+## 5. Request and Approval Process
+All planned leave requests must be logged through the internal HR Portal at least two weeks in advance and approved by the reporting manager.
+Emergency or unplanned medical leave must be reported via notification to the team lead before 09:00 AM on the day of absence.

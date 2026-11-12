@@ -1,0 +1,19 @@
+# CONFIDENTIAL — Northwind Enterprise Compensation & Salary Bands (2026)
+# RESTRICTION: HR Internal Access Only. Strict prohibition against disclosure to unauthorized roles.
+
+## 1. Engineering Ladder Compensation Structure
+- Band E3 (Associate Software Engineer): $85,000 - $115,000 base; target bonus 8%; standard equity 2,000 RSUs over 4 years.
+- Band E4 (Software Engineer II): $115,000 - $155,000 base; target bonus 12%; standard equity 5,000 RSUs over 4 years.
+- Band E5 (Senior Software Engineer): $155,000 - $205,000 base; target bonus 15%; standard equity 10,000 RSUs over 4 years.
+- Band E6 (Staff / Principal Architect): $205,000 - $275,000 base; target bonus 20%; standard equity 20,000 RSUs over 4 years.
+
+## 2. Product & Design Ladder Compensation Structure
+- Band P3 (Associate Product Manager): $80,000 - $110,000 base; target bonus 8%.
+- Band P4 (Product Manager II): $110,000 - $150,000 base; target bonus 12%.
+- Band P5 (Senior Product Manager): $150,000 - $195,000 base; target bonus 15%.
+- Band P6 (Lead / Director of Product): $195,000 - $260,000 base; target bonus 20%.
+
+## 3. Executive Discretionary Adjustments & Equity Vesting Rules
+Annual merit review cycles execute in Q4. Compensation ratio (compa-ratio) targets 1.0 against market median.
+Off-cycle compensation adjustments require joint authorization by the Department VP and Chief People Officer.
+All equity grants follow a 1-year cliff with quarterly vesting over 36 remaining months.
