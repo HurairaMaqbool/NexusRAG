@@ -21,11 +21,13 @@ from secure_rag.db.repository import SQLiteRepository
 from secure_rag.ingestion.pipeline import IngestionPipeline
 from secure_rag.llm.factory import create_provider
 from secure_rag.pipeline import PipelineOrchestrator
+from secure_rag.retrieval.cache import SemanticQueryCache
 from secure_rag.retrieval.embeddings import FakeEmbedder, SentenceTransformerEmbedder
 from secure_rag.retrieval.hybrid_engine import (
     HybridRetrievalEngine,
     reconcile_stale_documents,
 )
+from secure_rag.retrieval.reranker import CrossEncoderReranker, NoOpReranker
 from secure_rag.retrieval.vector_store import ChromaVectorStore
 from secure_rag.security.policy_engine import PolicyEngine
 from secure_rag.security.scanner import DocumentScanner
@@ -220,10 +222,16 @@ def create_application() -> Tuple[FastAPI, AppConfig]:
     policy_engine = PolicyEngine()
     audit_service = AuditService(repo=repo)
 
-    # Retrieval
-    retrieval_engine = HybridRetrievalEngine(
-        repo=repo, vector_store=vector_store, embedder=embedder
+    # Retrieval & Semantic Cache
+    reranker = (
+        CrossEncoderReranker()
+        if os.getenv("ENABLE_RERANKER", "0").lower() in ("1", "true", "yes") and config.app_env != "test"
+        else NoOpReranker()
     )
+    retrieval_engine = HybridRetrievalEngine(
+        repo=repo, vector_store=vector_store, embedder=embedder, reranker=reranker
+    )
+    semantic_cache = SemanticQueryCache()
 
     # Pipeline Orchestrator
     pipeline_orchestrator = PipelineOrchestrator(
@@ -233,6 +241,7 @@ def create_application() -> Tuple[FastAPI, AppConfig]:
         policy_engine=policy_engine,
         audit_service=audit_service,
         config=config,
+        cache=semantic_cache,
     )
 
     # Ingestion

@@ -22,7 +22,7 @@ rules:
 
   # Delimiter injection
   - id: delimiter_injection_system
-    pattern: "(?i)(<\\/?system>|\\[\\/?INST\\]|\\[\\/?SYS\\]|<\\|im_start\\|>|<\\|im_end\\|>|<<SYS>>|<\\/SYS>)"
+    pattern: "(?i)(<\\/?system>|\\[\\/?(INST|SYS|SYSTEM|USER\\s+QUESTION|CONTEXT|RECENT_CHAT|INSTRUCTION|PROMPT)[^\\]]*\\]|<\\|im_start\\|>|<\\|im_end\\|>|<<SYS>>|<\\/SYS>)"
     description: "LLM delimiter/tag injection"
     weight: 0.90
 
@@ -65,3 +65,15 @@ rules:
     pattern: "(?i)(DAN\\s*mode|do\\s+anything\\s+now|\\bjailbreak\\b|god\\s+mode|unrestricted\\s+mode)"
     description: "Known jailbreak prompt patterns"
     weight: 0.85
+
+  # Invisible CSS / HTML cloaking payload
+  - id: hidden_css_injection
+    pattern: "(?i)(style\\s*=\\s*['\"][^'\"]*(?:display\\s*:\\s*none|font-size\\s*:\\s*0|visibility\\s*:\\s*hidden|opacity\\s*:\\s*0))"
+    description: "Invisible HTML/CSS text cloaking attack"
+    weight: 0.75
+
+  # Suspicious instruction inside HTML comments
+  - id: instruction_in_html_comment
+    pattern: "(?i)<!--[\\s\\S]*?(?:ignore|system|instruction|prompt|override)[\\s\\S]*?-->"
+    description: "Adversarial instructions hidden in HTML comments"
+    weight: 0.70

@@ -9,11 +9,20 @@ from typing import List, Optional
 from secure_rag.security.models import OutputGuardResult
 
 # Bare 9-digit numbers and ordinary emails are not blocked — they appear in
-# normal answers. Dashed SSNs, API keys, and credentials still block.
+# normal answers. Dashed SSNs, API keys, credentials, and tokens still block.
 _SENSITIVE_PATTERNS = [
     (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "ssn_pattern"),
-    (re.compile(r"(?i)\b(sk-[a-zA-Z0-9]{20,}|gsk_[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*\S{10,})"), "api_key_pattern"),
+    (
+        re.compile(
+            r"(?i)\b(sk-[a-zA-Z0-9]{20,}|gsk_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|api[_-]?key\s*[:=]\s*\S{10,})"
+        ),
+        "api_key_pattern",
+    ),
     (re.compile(r"(?i)(password\s*[:=]\s*\S+|secret[_-]?key\s*[:=]\s*\S+)"), "credential_leak"),
+    (re.compile(r"(?i)-----BEGIN\s+([A-Z\s]+)?PRIVATE\s+KEY-----"), "private_key_leak"),
+    (re.compile(r"\beyJ[a-zA-Z0-9_-]{8,}\.eyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{4,}\b"), "jwt_token_leak"),
+    (re.compile(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b"), "credit_card_pattern"),
+    (re.compile(r"(!\[[^\n\]]*\]\((?:https?:|ftp:|//)[^\n\)]+\)|<img\s+[^>]*src=)"), "markdown_image_exfiltration"),
 ]
 
 # System prompt leak indicators

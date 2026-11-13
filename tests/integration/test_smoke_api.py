@@ -18,6 +18,19 @@ class _FakePipeline:
             request_id="req-test",
         )
 
+    def execute_stream(self, question, user_id, user_role, allowed_access_levels, **kwargs):
+        yield {"event": "start", "request_id": "req-test"}
+        yield {"event": "token", "data": "echo:"}
+        yield {"event": "token", "data": question}
+        yield {
+            "event": "done",
+            "request_id": "req-test",
+            "decision": "ALLOW",
+            "reason_code": "ALLOWED_GENERAL_KNOWLEDGE",
+            "risk_score": 0.0,
+        }
+
+
 
 class _FakeSession:
     def __init__(self):
@@ -67,3 +80,18 @@ def test_health_and_chat_smoke():
     assert body["answer"].startswith("echo:")
     assert body["decision"] == "ALLOW"
     assert "reason_code" in body
+
+    # Test /chat/stream SSE endpoint
+    stream_resp = client.post(
+        "/chat/stream",
+        json={"question": "Stream this please"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert stream_resp.status_code == 200
+    assert "text/event-stream" in stream_resp.headers["content-type"]
+    stream_content = stream_resp.text
+    assert "data: " in stream_content
+    assert '"event": "token"' in stream_content
+    assert "echo:" in stream_content
+    assert '"event": "done"' in stream_content
+

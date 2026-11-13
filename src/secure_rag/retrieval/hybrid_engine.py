@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from secure_rag.db.repository import SQLiteRepository
 from secure_rag.retrieval.embeddings import BaseEmbedder
 from secure_rag.retrieval.keyword_search import KeywordSearch
+from secure_rag.retrieval.reranker import BaseReranker
 from secure_rag.retrieval.vector_store import ChromaVectorStore
 
 # RRF constant (standard value from Cormack et al.)
@@ -44,10 +45,12 @@ class HybridRetrievalEngine:
         repo: SQLiteRepository,
         vector_store: ChromaVectorStore,
         embedder: BaseEmbedder,
+        reranker: Optional[BaseReranker] = None,
     ):
         self.repo = repo
         self.vector_store = vector_store
         self.embedder = embedder
+        self.reranker = reranker
         self.keyword_search = KeywordSearch(repo)
 
     def retrieve(
@@ -117,8 +120,9 @@ class HybridRetrievalEngine:
                 rrf_score += 1.0 / (RRF_K + sparse_ranks[cid])
             fused[cid] = rrf_score
 
-        # Sort by fused score descending
-        sorted_ids = sorted(fused.keys(), key=lambda x: fused[x], reverse=True)[:top_k]
+        # Sort by fused score descending (over-fetch if reranker is active)
+        fetch_k = max(top_k * 2, 10) if self.reranker else top_k
+        sorted_ids = sorted(fused.keys(), key=lambda x: fused[x], reverse=True)[:fetch_k]
 
         # Build chunk lookup from both SQLite validations and BM25 results
         chunk_data: Dict[str, Dict[str, Any]] = {}
@@ -156,7 +160,11 @@ class HybridRetrievalEngine:
                 fused_score=round(fused.get(cid, 0.0), 6),
             ))
 
-        return results
+        if self.reranker:
+            return self.reranker.rerank(query, results, top_k=top_k)
+
+        return results[:top_k]
+
 
 
 def reconcile_stale_documents(

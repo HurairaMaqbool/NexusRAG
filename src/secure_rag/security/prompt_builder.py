@@ -4,8 +4,24 @@ Enforces system/context/user demarcation with canary token injection.
 Retrieved text is NEVER trusted as instructions.
 """
 
+import re
 import secrets
 from typing import Dict, List, Optional
+
+_DELIMITER_DISARM_REGEX = re.compile(
+    r"\[/?(SYSTEM|USER\s+QUESTION|CONTEXT|RECENT_CHAT|INST|SYS|INSTRUCTION|PROMPT)[^\]]*\]",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_delimiters(text: str) -> str:
+    """Escapes structural prompt control tags in untrusted content by disarming control brackets."""
+    if not text:
+        return ""
+    return _DELIMITER_DISARM_REGEX.sub(
+        lambda m: m.group(0).replace("[", "(").replace("]", ")"),
+        text,
+    )
 
 
 def generate_canary_token() -> str:
@@ -60,7 +76,7 @@ def build_secure_prompt(
     if retrieved_chunks:
         context_parts = []
         for i, chunk in enumerate(retrieved_chunks):
-            text = chunk.get("text", "") or chunk.get("chunk_text", "")
+            text = _sanitize_delimiters(chunk.get("text", "") or chunk.get("chunk_text", ""))
             source = chunk.get("source_file", "unknown")
             context_parts.append(f"[Document {i+1} | Source: {source}]\n{text}")
         context_text = "\n\n".join(context_parts)
@@ -80,7 +96,7 @@ def build_secure_prompt(
             role = str(turn.get("role") or "user").strip().lower()
             if role not in ("user", "assistant"):
                 continue
-            content = str(turn.get("content") or "").strip()
+            content = _sanitize_delimiters(str(turn.get("content") or "").strip())
             if not content:
                 continue
             lines.append(f"{role.upper()}: {content[:500]}")
@@ -91,7 +107,8 @@ def build_secure_prompt(
                 + "\n[/RECENT_CHAT]\n\n"
             )
 
-    user_section = f"[USER QUESTION]\n{question}\n[/USER QUESTION]"
+    safe_question = _sanitize_delimiters(question)
+    user_section = f"[USER QUESTION]\n{safe_question}\n[/USER QUESTION]"
 
     return (
         f"{system_section}\n\n{context_section}\n\n"

@@ -15,11 +15,8 @@ from secure_rag.llm.base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
 
-# Models this deployment can call. Faster model first.
-# Decommissioned ids (llama3-70b-8192, mixtral-8x7b-32768) are omitted.
+# Active models on deployment tier. Active, fast model first.
 GROQ_MODELS = [
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
 ]

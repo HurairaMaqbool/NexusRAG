@@ -3,7 +3,7 @@ src/secure_rag/llm/factory.py — LLM Provider Factory
 Creates the appropriate provider based on configuration.
 """
 
-from typing import Optional
+from typing import Iterator, Optional
 
 from secure_rag.core.config import AppConfig
 from secure_rag.llm.base import BaseLLMProvider
@@ -21,6 +21,12 @@ class MockLLMProvider(BaseLLMProvider):
 
     def generate(self, prompt: str, temperature: float = 0.2) -> str:
         return self._default_response
+
+    def generate_stream(self, prompt: str, temperature: float = 0.2) -> Iterator[str]:
+        # Yield word-by-word with spaces to emulate realistic token streaming in tests
+        words = self._default_response.split(" ")
+        for i, word in enumerate(words):
+            yield word if i == 0 else f" {word}"
 
     def is_available(self) -> bool:
         return True

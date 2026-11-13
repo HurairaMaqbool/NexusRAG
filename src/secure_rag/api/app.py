@@ -4,15 +4,19 @@ REST API with authentication, pipeline execution, and audit endpoints.
 Uses dependency injection to avoid importing pipeline module directly (architecture boundary B7).
 """
 
+import json
+import logging
 import os
 import time
 import threading
 from collections import defaultdict
 from typing import Any, Optional
 
+logger = logging.getLogger(__name__)
+
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -293,7 +297,8 @@ def create_app(
                 user_email=getattr(session, "email", None),
                 history=history_payload,
             )
-        except Exception:
+        except Exception as e:
+            logger.exception("Pipeline chat failed: %s", type(e).__name__)
             return JSONResponse(
                 {"error": "An internal error occurred. Please try again later."},
                 status_code=500,
@@ -305,6 +310,77 @@ def create_app(
             "reason_code": result.reason_code.value,
             "request_id": result.request_id,
         }
+
+    @application.post("/chat/stream")
+    async def chat_stream(data: ChatRequest, request: Request):
+        auth = application.state.auth_service
+        pipe = application.state.pipeline
+        if not auth or not pipe:
+            return JSONResponse({"error": "Service unavailable"}, status_code=503)
+
+        token = _extract_bearer_token(request)
+        if not token:
+            return JSONResponse({"error": "Authentication required."}, status_code=401)
+
+        try:
+            session = auth.validate_session(token)
+        except RateLimitExceededError:
+            return JSONResponse(
+                {"error": "Too many requests. Please try again later."},
+                status_code=429,
+            )
+        except AuthenticationError:
+            return JSONResponse({"error": "Invalid or expired session."}, status_code=401)
+
+        clean_question = data.question.strip()
+        if not clean_question or "\x00" in clean_question:
+            return JSONResponse(
+                {"error": "Invalid question content."},
+                status_code=422,
+            )
+
+        rate_key = f"chat:{session.user_id}"
+        if _chat_limiter.is_limited(rate_key):
+            return JSONResponse(
+                {"error": "Too many requests. Please slow down."},
+                status_code=429,
+            )
+
+        history_payload = []
+        for turn in (data.history or [])[-6:]:
+            role = (turn.role or "").strip().lower()
+            if role not in ("user", "assistant"):
+                continue
+            content = (turn.content or "").strip()
+            if not content or "\x00" in content:
+                continue
+            history_payload.append({"role": role, "content": content[:500]})
+
+        def event_stream():
+            try:
+                for evt in pipe.execute_stream(
+                    question=clean_question,
+                    user_id=session.user_id,
+                    user_role=session.role_name,
+                    allowed_access_levels=session.allowed_access_levels,
+                    user_email=getattr(session, "email", None),
+                    history=history_payload,
+                ):
+                    yield f"data: {json.dumps(evt)}\n\n"
+            except Exception as exc:
+                logger.exception("Pipeline streaming failed: %s", type(exc).__name__)
+                yield f"data: {json.dumps({'event': 'error', 'data': 'An internal error occurred. Please try again later.'})}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
 
     # ── Upload Endpoint ─────────────────────────────────────────────────
 
@@ -384,6 +460,11 @@ def create_app(
                 uploader_role=session.role_name,
                 user_id=session.user_id,
             )
+            # Invalidate semantic cache so stale responses are cleared
+            pipeline = getattr(application.state, "pipeline", None)
+            if pipeline and hasattr(pipeline, "cache") and pipeline.cache:
+                pipeline.cache.clear()
+
             # Avoid status overwrite if ingest result already includes "status"
             return {"ok": True, "document": result}
         except AuthorizationError:

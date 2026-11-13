@@ -4,6 +4,7 @@ Communicates with FastAPI backend via HTTP. Stores only session token in state.
 No local RAG, no direct DB access — all logic lives on the backend.
 """
 
+import json
 import os
 
 import requests
@@ -249,51 +250,102 @@ if prompt := st.chat_input("Ask about your documents, general knowledge, or math
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        placeholder = st.empty()
-        with st.spinner("Processing..."):
-            prior = []
-            for m in st.session_state.messages[:-1][-6:]:
-                if m.get("role") not in ("user", "assistant") or not m.get("content"):
-                    continue
-                prior.append(
-                    {
-                        "role": m["role"],
-                        "content": str(m["content"])[:2000],
-                    }
-                )
-            resp = _api(
-                "POST",
-                "/chat",
-                json={"question": prompt, "history": prior},
-                headers=_headers(),
-                timeout=90,
+        prior = []
+        for m in st.session_state.messages[:-1][-6:]:
+            if m.get("role") not in ("user", "assistant") or not m.get("content"):
+                continue
+            prior.append(
+                {
+                    "role": m["role"],
+                    "content": str(m["content"])[:2000],
+                }
             )
-            if resp is None:
-                answer = "⚠️ Backend is unreachable. Start the API with `python main.py`."
-            elif resp.status_code == 598:
-                answer = "⚠️ The assistant timed out. Please try again."
-            elif resp.status_code == 200:
-                payload = _safe_json(resp)
-                answer = payload.get("answer", "No response.")
-                decision = (payload.get("decision") or "").upper()
-                reason = (payload.get("reason_code") or "").upper()
-                if decision and decision != "ALLOW":
-                    answer = f"{answer}\n\n_Decision: {decision}_"
-                elif reason == "CLOUD_PRIVACY_GATE":
-                    answer = f"{answer}\n\n_Privacy: HR documents were not sent to the cloud LLM._"
-            elif resp.status_code == 401:
-                answer = "⚠️ Session expired. Please log in again."
-                st.session_state.token = None
-            else:
-                payload = _safe_json(resp)
-                detail = payload.get("detail")
-                if isinstance(detail, list) and detail:
-                    first = detail[0] if isinstance(detail[0], dict) else {}
-                    answer = first.get("msg") or payload.get("error") or "An error occurred."
+
+        def _token_stream_generator():
+            try:
+                s_resp = requests.post(
+                    f"{API_BASE_URL}/chat/stream",
+                    json={"question": prompt, "history": prior},
+                    headers=_headers(),
+                    stream=True,
+                    timeout=90,
+                )
+                if s_resp.status_code == 200:
+                    for line in s_resp.iter_lines():
+                        if not line:
+                            continue
+                        line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+                        if line_str.startswith("data: "):
+                            raw_data = line_str[6:].strip()
+                            try:
+                                evt = json.loads(raw_data)
+                                if evt.get("event") == "token":
+                                    yield evt.get("data", "")
+                                elif evt.get("event") == "error":
+                                    yield f"\n\n⚠️ {evt.get('data', 'Error occurred.')}"
+                            except Exception:
+                                continue
                 else:
-                    answer = payload.get("error") or (
-                        detail if isinstance(detail, str) else "An error occurred."
-                    )
-                answer = f"⚠️ {answer}"
-            placeholder.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+                    yield None
+            except Exception:
+                yield None
+
+        stream_worked = False
+        full_tokens = []
+        try:
+            gen = _token_stream_generator()
+            first = next(gen, None)
+            if first is not None:
+                stream_worked = True
+                full_tokens.append(first)
+                def _full_gen():
+                    yield first
+                    for t in gen:
+                        if t is not None:
+                            full_tokens.append(t)
+                            yield t
+                st.write_stream(_full_gen())
+                answer = "".join(full_tokens)
+        except Exception:
+            stream_worked = False
+
+        if not stream_worked:
+            placeholder = st.empty()
+            with st.spinner("Processing..."):
+                resp = _api(
+                    "POST",
+                    "/chat",
+                    json={"question": prompt, "history": prior},
+                    headers=_headers(),
+                    timeout=90,
+                )
+                if resp is None:
+                    answer = "⚠️ Backend is unreachable. Start the API with `python main.py`."
+                elif resp.status_code == 598:
+                    answer = "⚠️ The assistant timed out. Please try again."
+                elif resp.status_code == 200:
+                    payload = _safe_json(resp)
+                    answer = payload.get("answer", "No response.")
+                    decision = (payload.get("decision") or "").upper()
+                    reason = (payload.get("reason_code") or "").upper()
+                    if decision and decision != "ALLOW":
+                        answer = f"{answer}\n\n_Decision: {decision}_"
+                    elif reason == "CLOUD_PRIVACY_GATE":
+                        answer = f"{answer}\n\n_Privacy: HR documents were not sent to the cloud LLM._"
+                elif resp.status_code == 401:
+                    answer = "⚠️ Session expired. Please log in again."
+                    st.session_state.token = None
+                else:
+                    payload = _safe_json(resp)
+                    detail = payload.get("detail")
+                    if isinstance(detail, list) and detail:
+                        first_err = detail[0] if isinstance(detail[0], dict) else {}
+                        answer = first_err.get("msg") or payload.get("error") or "An error occurred."
+                    else:
+                        answer = payload.get("error") or (
+                            detail if isinstance(detail, str) else "An error occurred."
+                        )
+                    answer = f"⚠️ {answer}"
+                placeholder.markdown(answer)
+
+        st.session_state.messages.append({"role": "assistant", "content": answer})

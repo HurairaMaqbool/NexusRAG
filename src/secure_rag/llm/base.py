@@ -4,6 +4,7 @@ Defines the pluggable LLM provider interface per ARCHITECTURE §7.2.
 """
 
 from abc import ABC, abstractmethod
+from typing import Iterator
 
 
 class BaseLLMProvider(ABC):
@@ -22,6 +23,13 @@ class BaseLLMProvider(ABC):
         Raises LLMProviderError on communication failure.
         """
         ...
+
+    def generate_stream(self, prompt: str, temperature: float = 0.2) -> Iterator[str]:
+        """
+        Streams completion tokens against the underlying model.
+        Default implementation yields the complete output in one chunk.
+        """
+        yield self.generate(prompt=prompt, temperature=temperature)
 
     @abstractmethod
     def is_available(self) -> bool:

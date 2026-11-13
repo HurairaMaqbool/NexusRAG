@@ -3,6 +3,9 @@ src/secure_rag/llm/ollama_provider.py — Local Ollama LLM Provider
 Communicates with Ollama via HTTP. Fails cleanly if unavailable.
 """
 
+import json
+from typing import Iterator
+
 import httpx
 
 from secure_rag.core.errors import LLMProviderError
@@ -52,6 +55,39 @@ class OllamaProvider(BaseLLMProvider):
         except Exception as e:
             raise LLMProviderError(f"Ollama provider error: {type(e).__name__}: {e}")
 
+    def generate_stream(self, prompt: str, temperature: float = 0.2) -> Iterator[str]:
+        """Streams completion tokens from local Ollama."""
+        try:
+            with httpx.stream(
+                "POST",
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": True,
+                    "options": {"temperature": temperature},
+                },
+                timeout=self.timeout,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        chunk = data.get("response", "")
+                        if chunk:
+                            yield chunk
+                    except json.JSONDecodeError:
+                        continue
+        except httpx.ConnectError:
+            raise LLMProviderError(
+                f"Ollama is not running at {self.base_url}. "
+                "Start Ollama with: ollama serve"
+            )
+        except Exception as e:
+            raise LLMProviderError(f"Ollama streaming error: {type(e).__name__}: {e}")
+
     def is_available(self) -> bool:
         """Checks if Ollama is running and responsive."""
         try:
@@ -59,3 +95,4 @@ class OllamaProvider(BaseLLMProvider):
             return resp.status_code == 200
         except Exception:
             return False
+

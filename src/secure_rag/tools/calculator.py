@@ -98,12 +98,24 @@ def calculator_tool(query: str) -> str:
     ):
         normalized = re.sub(pattern, symbol, normalized)
 
-    # Require at least one operator so a stray number is not treated as math.
-    matches = re.findall(
-        r"\d+(?:\.\d+)?(?:\s*[\+\-\*\/\^%]\s*\d+(?:\.\d+)?)+",
-        normalized,
-    )
-    if not matches:
+    # Extract sequences of digits, arithmetic operators, and parentheses
+    matches = re.findall(r"[\(\)\d\.\s\+\-\*\/\^%]+", normalized)
+    valid_candidates = []
+    for cand in matches:
+        cand_str = cand.strip(" ,;?!")
+        if re.search(r"[\+\-\*\/\^%]", cand_str) and re.search(r"\d", cand_str):
+            valid_candidates.append(cand_str)
+
+    if not valid_candidates:
         return "No valid mathematical expression found in your query."
-    result = safe_eval(max(matches, key=len).strip())
+
+    # Sort candidates by length (longest expression first)
+    valid_candidates.sort(key=len, reverse=True)
+    for candidate in valid_candidates:
+        res = safe_eval(candidate)
+        if not str(res).startswith("Math error:"):
+            return f"Result: {res}"
+
+    # Fallback to the longest candidate's error message
+    result = safe_eval(valid_candidates[0])
     return f"Result: {result}"
