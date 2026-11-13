@@ -88,9 +88,22 @@ def safe_eval(expr: str):
 
 def calculator_tool(query: str) -> str:
     """Extract and safely evaluate a math expression from query text."""
-    matches = re.findall(r'[\d\s\+\-\*\/\.\(\)\^%]+', query)
-    best = max(matches, key=len) if matches else ""
-    if not best.strip():
+    normalized = query
+    for pattern, symbol in (
+        (r"(?i)\bdivided by\b", "/"),
+        (r"(?i)\bmultiplied by\b", "*"),
+        (r"(?i)\btimes\b", "*"),
+        (r"(?i)\bplus\b", "+"),
+        (r"(?i)\bminus\b", "-"),
+    ):
+        normalized = re.sub(pattern, symbol, normalized)
+
+    # Require at least one operator so a stray number is not treated as math.
+    matches = re.findall(
+        r"\d+(?:\.\d+)?(?:\s*[\+\-\*\/\^%]\s*\d+(?:\.\d+)?)+",
+        normalized,
+    )
+    if not matches:
         return "No valid mathematical expression found in your query."
-    result = safe_eval(best.strip())
+    result = safe_eval(max(matches, key=len).strip())
     return f"Result: {result}"

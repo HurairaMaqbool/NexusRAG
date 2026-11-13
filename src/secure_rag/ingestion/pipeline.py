@@ -199,7 +199,9 @@ class IngestionPipeline:
                         "chunks_count": len(existing_chunks)
                     }
                 else:
-                    # Same hash with conflicting access level (B5 event: doc_duplicate_conflict)
+                    # Same bytes already indexed under another access level — treat as
+                    # idempotent success so the UI is not a dead-end; keep existing level.
+                    existing_chunks = self.repo.get_chunks_by_document(existing_doc["doc_id"])
                     try:
                         self.repo.append_audit_log(
                             decision_id=None,
@@ -210,15 +212,24 @@ class IngestionPipeline:
                                 "file_hash": file_hash,
                                 "existing_level": existing_doc["access_level"],
                                 "attempted_level": clean_access_level,
-                                "reason_code": "CLASSIFICATION_CONFLICT"
+                                "reason_code": "CLASSIFICATION_CONFLICT",
+                                "resolution": "return_existing",
                             }
                         )
                     except Exception:
                         pass
-                    raise DuplicateDocumentError(
-                        f"Document with identical content exists with conflicting access level "
-                        f"'{existing_doc['access_level']}'. Ingestion rejected."
-                    )
+                    return {
+                        "doc_id": existing_doc["doc_id"],
+                        "title": existing_doc["title"],
+                        "access_level": existing_doc["access_level"],
+                        "status": "existing",
+                        "chunks_count": len(existing_chunks),
+                        "warning": (
+                            f"Already indexed as '{existing_doc['access_level']}' "
+                            f"(you requested '{clean_access_level}'). "
+                            "Using the existing classification."
+                        ),
+                    }
             elif doc_status == "failed":
                 # Clean retry: purge old failed document record before re-attempting (B4)
                 self.repo.delete_document(existing_doc["doc_id"])

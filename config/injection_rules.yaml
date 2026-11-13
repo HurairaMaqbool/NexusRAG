@@ -14,8 +14,9 @@ rules:
     description: "Attempts to extract system prompt"
     weight: 0.80
 
+  # Avoid bare "act as" (normal workplace prose). Keep jailbreak-style hijacks.
   - id: role_override
-    pattern: "(?i)(you\\s+are\\s+now|act\\s+as|pretend\\s+(to\\s+be|you\\s+are)|assume\\s+the\\s+role|new\\s+role|switch\\s+to|roleplay\\s+as)"
+    pattern: "(?i)(you\\s+are\\s+now|pretend\\s+(to\\s+be|you\\s+are)|assume\\s+the\\s+role|roleplay\\s+as|switch\\s+to\\s+(DAN|god\\s+mode)|new\\s+persona)"
     description: "Role/persona hijacking attempt"
     weight: 0.75
 
@@ -25,41 +26,42 @@ rules:
     description: "LLM delimiter/tag injection"
     weight: 0.90
 
+  # Require XML-like role tags; do not match handbook headings like "### User responsibilities"
   - id: delimiter_injection_xml
-    pattern: "(?i)(<\\/?assistant>|<\\/?user>|<\\/?human>|<\\/?ai>|###\\s*(System|User|Assistant))"
+    pattern: "(?i)(<\\/?assistant>|<\\/?user>|<\\/?human>|<\\/?ai>|###\\s*(System|User|Assistant)\\s*:)"
     description: "XML/markdown role delimiter injection"
     weight: 0.80
 
-  # Data exfiltration attempts
+  # Suspicious data-URI / IP exfil style URLs (plain https links in docs are common)
   - id: exfil_url
-    pattern: "(?i)(https?://|ftp://|data:)\\S{20,}"
-    description: "Potential data exfiltration via URL"
+    pattern: "(?i)(data:text\\/|ftp://\\S{20,}|(https?://(?:\\d{1,3}\\.){3}\\d{1,3}|https?://localhost)[^\\s]{8,}|https?://[^\\s]{40,}[?&](token|key|secret|password)=)"
+    description: "Potential data exfiltration via suspicious URL"
     weight: 0.60
 
   - id: exfil_encoding
-    pattern: "(?i)(base64|encode|decode|hex|rot13|atob|btoa)\\s*[:(]"
+    pattern: "(?i)(base64|rot13|atob|btoa)\\s*[:(]"
     description: "Encoding-based obfuscation or exfiltration"
     weight: 0.55
 
   - id: exfil_markdown_image
-    pattern: "!\\[.*\\]\\(https?://\\S+\\)"
+    pattern: "!\\[[^\\]]*\\]\\((?:https?://(?:\\d{1,3}\\.){3}\\d{1,3}|data:)[^)]+\\)"
     description: "Markdown image exfiltration vector"
     weight: 0.65
 
-  # Command/code injection
+  # Command/code injection — word boundaries so "evaluation" / "execute" do not match
   - id: code_injection
-    pattern: "(?i)(exec|eval|import\\s+os|subprocess|__import__|os\\.system|os\\.popen)"
+    pattern: "(?i)(\\beval\\b|\\bexec\\b|\\bimport\\s+os\\b|\\bsubprocess\\b|__import__|\\bos\\.system\\b|\\bos\\.popen\\b)"
     description: "Code/command injection attempt"
     weight: 0.70
 
-  # Prompt leaking keywords
+  # High-confidence prompt extraction markers only
   - id: prompt_leak_keywords
-    pattern: "(?i)(BEGIN\\s+HIDDEN|END\\s+HIDDEN|CONFIDENTIAL\\s+PROMPT|INTERNAL\\s+ONLY|DO\\s+NOT\\s+SHARE)"
+    pattern: "(?i)(BEGIN\\s+HIDDEN|END\\s+HIDDEN|CONFIDENTIAL\\s+PROMPT)"
     description: "Markers suggesting prompt extraction payload"
     weight: 0.50
 
-  # Jailbreak patterns
+  # Jailbreak patterns — avoid bare "developer mode" (common IT prose)
   - id: jailbreak_dan
-    pattern: "(?i)(DAN\\s*mode|do\\s+anything\\s+now|jailbreak|developer\\s+mode|god\\s+mode|unrestricted\\s+mode)"
+    pattern: "(?i)(DAN\\s*mode|do\\s+anything\\s+now|\\bjailbreak\\b|god\\s+mode|unrestricted\\s+mode)"
     description: "Known jailbreak prompt patterns"
     weight: 0.85

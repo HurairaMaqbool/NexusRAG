@@ -7,6 +7,7 @@ risk_thresholds:
   review: 0.40   # RISK_THRESHOLD_REVIEW — scores >= this trigger REVIEW
   block: 0.75    # RISK_THRESHOLD_BLOCK  — scores >= this trigger BLOCK
 
+# Documentary only — runtime gate is ENABLE_WEB_SEARCH env → AppConfig.enable_web_search
 enable_web_search: false  # Decision D3: OFF by default
 
 role_permissions:

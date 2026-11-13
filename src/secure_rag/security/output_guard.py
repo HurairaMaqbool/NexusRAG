@@ -8,11 +8,10 @@ from typing import List, Optional
 
 from secure_rag.security.models import OutputGuardResult
 
-# Sensitive data patterns
+# Bare 9-digit numbers and ordinary emails are not blocked — they appear in
+# normal answers. Dashed SSNs, API keys, and credentials still block.
 _SENSITIVE_PATTERNS = [
-    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"), "email_address"),
     (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "ssn_pattern"),
-    (re.compile(r"\b\d{9}\b"), "ssn_no_dashes"),
     (re.compile(r"(?i)\b(sk-[a-zA-Z0-9]{20,}|gsk_[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*\S{10,})"), "api_key_pattern"),
     (re.compile(r"(?i)(password\s*[:=]\s*\S+|secret[_-]?key\s*[:=]\s*\S+)"), "credential_leak"),
 ]

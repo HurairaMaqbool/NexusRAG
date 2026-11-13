@@ -13,7 +13,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from secure_rag.auth.constants import ROLE_ACCESS_MAPPING, can_ingest
@@ -103,8 +103,25 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=72)
 
 
+_CHAT_HISTORY_CONTENT_MAX = 2000
+
+
+class ChatHistoryTurn(BaseModel):
+    role: str = Field(..., min_length=1, max_length=32)
+    # Accept long assistant replies from the UI; truncate instead of 422.
+    content: str = Field(..., min_length=1, max_length=20000)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _truncate_content(cls, value: object) -> object:
+        if isinstance(value, str) and len(value) > _CHAT_HISTORY_CONTENT_MAX:
+            return value[:_CHAT_HISTORY_CONTENT_MAX]
+        return value
+
+
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000)
+    history: list[ChatHistoryTurn] = Field(default_factory=list, max_length=8)
 
 
 def _extract_bearer_token(request: Request) -> str:
@@ -119,6 +136,7 @@ def create_app(
     auth_service: Optional[AuthService] = None,
     pipeline_orchestrator: Optional[Any] = None,
     ingestion_pipeline: Optional[Any] = None,
+    policy_engine: Optional[Any] = None,
 ) -> FastAPI:
     """
     Build and return the configured FastAPI application.
@@ -171,6 +189,7 @@ def create_app(
     application.state.auth_service = auth_service
     application.state.pipeline = pipeline_orchestrator
     application.state.ingestion = ingestion_pipeline
+    application.state.policy_engine = policy_engine
 
     # ── Auth Endpoints ──────────────────────────────────────────────────
 
@@ -255,12 +274,24 @@ def create_app(
                 status_code=429,
             )
 
+        history_payload = []
+        for turn in (data.history or [])[-6:]:
+            role = (turn.role or "").strip().lower()
+            if role not in ("user", "assistant"):
+                continue
+            content = (turn.content or "").strip()
+            if not content or "\x00" in content:
+                continue
+            history_payload.append({"role": role, "content": content[:500]})
+
         try:
             result = pipe.execute(
                 question=clean_question,
                 user_id=session.user_id,
                 user_role=session.role_name,
                 allowed_access_levels=session.allowed_access_levels,
+                user_email=getattr(session, "email", None),
+                history=history_payload,
             )
         except Exception:
             return JSONResponse(
@@ -271,6 +302,7 @@ def create_app(
         return {
             "answer": result.answer,
             "decision": result.decision.value,
+            "reason_code": result.reason_code.value,
             "request_id": result.request_id,
         }
 
@@ -394,9 +426,18 @@ def create_app(
         except AuthenticationError:
             return JSONResponse({"error": "Invalid or expired session."}, status_code=401)
 
-        if session.role_name.lower() != "admin":
+        policy = application.state.policy_engine
+        can_view_audit = False
+        if policy is not None and hasattr(policy, "role_allows"):
+            can_view_audit = bool(
+                policy.role_allows(session.role_name, "can_view_audit_dashboard")
+            )
+        else:
+            # Fail closed to admin-only when policy is not injected.
+            can_view_audit = session.role_name.lower().strip() == "admin"
+        if not can_view_audit:
             return JSONResponse(
-                {"error": "Access denied. Admin role required."},
+                {"error": "Access denied. Audit dashboard permission required."},
                 status_code=403,
             )
 
@@ -408,6 +449,10 @@ def create_app(
 
     @application.get("/health")
     async def health():
-        return {"status": "online", "version": "2.0.0"}
+        return {
+            "status": "online",
+            "version": "2.0.0",
+            "llm_provider": os.getenv("LLM_PROVIDER", "ollama").lower().strip(),
+        }
 
     return application

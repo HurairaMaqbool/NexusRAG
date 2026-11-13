@@ -80,6 +80,16 @@ class TestD1GroqEnforcement:
         )
         assert result.decision == DecisionOutcome.ALLOW
 
+    def test_public_web_chunks_to_groq_allowed(self, engine):
+        chunks = [{"access_level": "public", "chunk_id": "web-1"}]
+        result = engine.evaluate_request(
+            user_role="hr",
+            risk_score=0.0,
+            target_llm_provider="groq",
+            retrieved_chunks=chunks,
+        )
+        assert result.decision == DecisionOutcome.ALLOW
+
     def test_hr_chunks_to_ollama_allowed(self, engine):
         chunks = [{"access_level": "hr", "chunk_id": "c1"}]
         result = engine.evaluate_request(

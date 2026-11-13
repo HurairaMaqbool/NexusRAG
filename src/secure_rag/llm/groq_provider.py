@@ -3,7 +3,9 @@ src/secure_rag/llm/groq_provider.py — Groq Cloud LLM Provider with Fallback Ch
 Implements BaseLLMProvider. Tries multiple Groq-hosted models in order until one succeeds.
 """
 
+import logging
 import os
+import re
 from typing import Optional
 
 from langchain_groq import ChatGroq
@@ -11,12 +13,54 @@ from langchain_groq import ChatGroq
 from secure_rag.core.errors import LLMProviderError
 from secure_rag.llm.base import BaseLLMProvider
 
+logger = logging.getLogger(__name__)
+
+# Models this deployment can call. Faster model first.
+# Decommissioned ids (llama3-70b-8192, mixtral-8x7b-32768) are omitted.
 GROQ_MODELS = [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
-    "llama3-70b-8192",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it",
 ]
+
+# Per-model HTTP timeout. Three models stay inside the client chat timeout.
+_REQUEST_TIMEOUT_SEC = 25.0
+_MAX_TOKENS = 768
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _message_text(result) -> str:
+    """Return visible answer text, dropping reasoning traces."""
+    content = getattr(result, "content", "") or ""
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(str(block.get("text") or ""))
+        content = "".join(parts)
+    elif not isinstance(content, str):
+        content = str(content)
+    return _THINK_BLOCK.sub("", content).strip()
+
+
+def _chat_client(model: str, temperature: float, api_key: str) -> ChatGroq:
+    """Build a Groq client that fails fast instead of reasoning without a limit."""
+    kwargs = {
+        "model": model,
+        "temperature": temperature,
+        "api_key": api_key,
+        "timeout": _REQUEST_TIMEOUT_SEC,
+        "max_retries": 0,
+        "max_tokens": _MAX_TOKENS,
+    }
+    # Reasoning controls only apply to gpt-oss / reasoning-capable models.
+    if "gpt-oss" in model or "qwen" in model:
+        kwargs["reasoning_effort"] = "low"
+        kwargs["reasoning_format"] = "hidden"
+    return ChatGroq(**kwargs)
 
 
 class GroqProvider(BaseLLMProvider):
@@ -44,15 +88,15 @@ class GroqProvider(BaseLLMProvider):
         last_error = None
         for model in self.models:
             try:
-                llm = ChatGroq(
-                    model=model,
-                    temperature=temperature,
-                    api_key=self.api_key,
-                )
-                result = llm.invoke(prompt)
-                return result.content
+                result = _chat_client(model, temperature, self.api_key).invoke(prompt)
+                text = _message_text(result)
+                if text:
+                    return text
+                last_error = LLMProviderError(f"{model} returned empty content")
+                logger.warning("Groq model %s returned empty content", model)
             except Exception as e:
                 last_error = e
+                logger.warning("Groq model %s failed: %s", model, type(e).__name__)
                 continue
 
         raise LLMProviderError(
@@ -66,11 +110,11 @@ class GroqProvider(BaseLLMProvider):
 
 # Legacy compatibility function used by prompts.py and qa_test_suite
 def get_llm(temperature: float = 0.3) -> ChatGroq:
-    """Return a ChatGroq instance, trying each model in the fallback chain."""
+    """Return a ChatGroq instance for the first configured model."""
     api_key = os.environ.get("GROQ_API_KEY", "")
     for model in GROQ_MODELS:
         try:
-            return ChatGroq(model=model, temperature=temperature, api_key=api_key)
+            return _chat_client(model, temperature, api_key)
         except Exception:
             continue
     raise RuntimeError("All Groq models unavailable. Check your API key.")

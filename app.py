@@ -56,11 +56,23 @@ def _safe_json(resp) -> dict:
 
 
 def _api(method: str, path: str, **kwargs) -> requests.Response | None:
-    """Fire an HTTP request to the backend; return None on connection failure."""
+    """Fire an HTTP request to the backend; return None on connection failure or timeout."""
+    timeout = kwargs.pop("timeout", 20)
     try:
-        return requests.request(method, f"{API_BASE_URL}{path}", timeout=30, **kwargs)
+        return requests.request(method, f"{API_BASE_URL}{path}", timeout=timeout, **kwargs)
+    except requests.Timeout:
+        # Marker object so callers can distinguish timeout vs offline.
+        resp = requests.Response()
+        resp.status_code = 598
+        resp._content = b'{"error":"Request timed out. Try again - large uploads can take a minute."}'
+        return resp
     except requests.ConnectionError:
         return None
+    except requests.RequestException as exc:
+        resp = requests.Response()
+        resp.status_code = 599
+        resp._content = f'{{"error":"Request failed: {type(exc).__name__}"}}'.encode("utf-8")
+        return resp
 
 
 def _headers() -> dict:
@@ -69,7 +81,10 @@ def _headers() -> dict:
 
 # ─── Backend health check ──────────────────────────────────────────────────────
 health = _api("GET", "/health")
-backend_online = health is not None and health.status_code == 200
+backend_online = (
+    health is not None
+    and getattr(health, "status_code", None) == 200
+)
 
 
 # ─── Login Screen ──────────────────────────────────────────────────────────────
@@ -145,22 +160,38 @@ with st.sidebar:
         uploaded_file = st.file_uploader("Choose a file", type=["pdf", "docx", "txt"])
         access_level = st.selectbox("Access Level", ["employee", "hr"])
         if st.button("⚡ Upload & Index") and uploaded_file:
-            with st.spinner("Uploading..."):
+            with st.spinner("Uploading & indexing (may take up to a minute)..."):
                 resp = _api(
                     "POST", "/upload",
                     headers=_headers(),
                     files={"file": (uploaded_file.name, uploaded_file.getvalue())},
                     data={"access_level": access_level},
+                    timeout=300,
                 )
                 if resp and resp.status_code == 200:
                     payload = _safe_json(resp)
                     document = payload.get("document") if isinstance(payload.get("document"), dict) else {}
                     title = document.get("title") or payload.get("title") or uploaded_file.name
-                    st.success(f"✅ Indexed: {title}")
+                    status = document.get("status") or "indexed"
+                    level = document.get("access_level") or access_level
+                    chunks = document.get("chunks_count")
+                    warn = document.get("warning")
+                    msg = f"✅ {'Already indexed' if status == 'existing' else 'Indexed'}: {title} ({level}"
+                    if chunks is not None:
+                        msg += f", {chunks} chunks"
+                    msg += ")"
+                    st.success(msg)
+                    if warn:
+                        st.warning(warn)
+                elif resp and resp.status_code == 598:
+                    st.error(_safe_json(resp).get("error", "Upload timed out."))
                 elif resp:
                     st.error(_safe_json(resp).get("error", "Upload failed."))
                 else:
-                    st.error("Backend unreachable.")
+                    st.error(
+                        f"Backend unreachable at {API_BASE_URL}. "
+                        "Start the API with `python main.py`, then try again."
+                    )
 
     # Audit viewer (Admin only)
     if st.session_state.role and st.session_state.role.lower() == "admin":
@@ -189,13 +220,30 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+role_lower = (st.session_state.role or "").lower()
+if role_lower == "admin":
+    st.info(
+        "Admin: company document retrieval is disabled. "
+        "You can ask general questions and view the audit dashboard."
+    )
+elif role_lower == "hr":
+    llm_name = ""
+    if isinstance(health, requests.Response) and health.status_code == 200:
+        llm_name = str(_safe_json(health).get("llm_provider") or "")
+    if llm_name == "groq":
+        st.info(
+            "HR tip: with the cloud LLM (Groq), HR-only documents stay private and "
+            "are not sent to the cloud. Use employee-level docs, or set "
+            "`LLM_PROVIDER=ollama` for full HR document answers."
+        )
+
 # Display messages
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
 # Chat input
-if prompt := st.chat_input("Ask about your documents, search the web, or solve math..."):
+if prompt := st.chat_input("Ask about your documents, general knowledge, or math..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -203,15 +251,49 @@ if prompt := st.chat_input("Ask about your documents, search the web, or solve m
     with st.chat_message("assistant"):
         placeholder = st.empty()
         with st.spinner("Processing..."):
-            resp = _api("POST", "/chat", json={"question": prompt}, headers=_headers())
+            prior = []
+            for m in st.session_state.messages[:-1][-6:]:
+                if m.get("role") not in ("user", "assistant") or not m.get("content"):
+                    continue
+                prior.append(
+                    {
+                        "role": m["role"],
+                        "content": str(m["content"])[:2000],
+                    }
+                )
+            resp = _api(
+                "POST",
+                "/chat",
+                json={"question": prompt, "history": prior},
+                headers=_headers(),
+                timeout=90,
+            )
             if resp is None:
-                answer = "⚠️ Backend is offline. Please start the server."
+                answer = "⚠️ Backend is unreachable. Start the API with `python main.py`."
+            elif resp.status_code == 598:
+                answer = "⚠️ The assistant timed out. Please try again."
             elif resp.status_code == 200:
-                answer = _safe_json(resp).get("answer", "No response.")
+                payload = _safe_json(resp)
+                answer = payload.get("answer", "No response.")
+                decision = (payload.get("decision") or "").upper()
+                reason = (payload.get("reason_code") or "").upper()
+                if decision and decision != "ALLOW":
+                    answer = f"{answer}\n\n_Decision: {decision}_"
+                elif reason == "CLOUD_PRIVACY_GATE":
+                    answer = f"{answer}\n\n_Privacy: HR documents were not sent to the cloud LLM._"
             elif resp.status_code == 401:
                 answer = "⚠️ Session expired. Please log in again."
                 st.session_state.token = None
             else:
-                answer = _safe_json(resp).get("error", "An error occurred.")
+                payload = _safe_json(resp)
+                detail = payload.get("detail")
+                if isinstance(detail, list) and detail:
+                    first = detail[0] if isinstance(detail[0], dict) else {}
+                    answer = first.get("msg") or payload.get("error") or "An error occurred."
+                else:
+                    answer = payload.get("error") or (
+                        detail if isinstance(detail, str) else "An error occurred."
+                    )
+                answer = f"⚠️ {answer}"
             placeholder.markdown(answer)
             st.session_state.messages.append({"role": "assistant", "content": answer})

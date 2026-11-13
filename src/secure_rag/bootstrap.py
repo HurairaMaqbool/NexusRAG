@@ -22,7 +22,10 @@ from secure_rag.ingestion.pipeline import IngestionPipeline
 from secure_rag.llm.factory import create_provider
 from secure_rag.pipeline import PipelineOrchestrator
 from secure_rag.retrieval.embeddings import FakeEmbedder, SentenceTransformerEmbedder
-from secure_rag.retrieval.hybrid_engine import HybridRetrievalEngine
+from secure_rag.retrieval.hybrid_engine import (
+    HybridRetrievalEngine,
+    reconcile_stale_documents,
+)
 from secure_rag.retrieval.vector_store import ChromaVectorStore
 from secure_rag.security.policy_engine import PolicyEngine
 from secure_rag.security.scanner import DocumentScanner
@@ -101,6 +104,78 @@ def _seed_dev_accounts(auth_service: AuthService, config: AppConfig) -> None:
         print(f"  Warning: Could not seed dev accounts: {type(e).__name__}")
 
 
+_DEMO_DOCUMENTS = (
+    (Path("data/raw/employee/leave_policy.txt"), "employee"),
+    (Path("data/raw/hr/salary_bands.txt"), "hr"),
+)
+
+
+def _seed_demo_documents(ingestion: IngestionPipeline, config: AppConfig) -> None:
+    """Idempotently ingest sample company docs in dev so chat has corpus."""
+    if config.app_env != "dev":
+        return
+    for path, access_level in _DEMO_DOCUMENTS:
+        if not path.is_file():
+            print(f"  Warning: demo document missing: {path}")
+            continue
+        try:
+            result = ingestion.ingest_file(
+                file_bytes=path.read_bytes(),
+                filename=path.name,
+                access_level=access_level,
+                uploader_role="hr",
+                user_id="system-seed",
+            )
+            status = result.get("status", "indexed")
+            print(
+                f"  DEV doc {path.name} ({access_level}): {status} "
+                f"chunks={result.get('chunks_count', 0)}"
+            )
+        except Exception as e:
+            print(f"  Warning: Could not seed {path.name}: {type(e).__name__}: {e}")
+
+
+def _sync_missing_vectors(
+    repo: SQLiteRepository,
+    vector_store: ChromaVectorStore,
+    embedder,
+) -> None:
+    """
+    Rebuild vector entries that exist in SQLite but are missing from the
+    active vector index (e.g. Windows file-index fallback after Chroma use).
+    """
+    try:
+        chunks = repo.get_chunks_by_access_levels(["employee", "hr"])
+        existing_ids = set(vector_store.get_all_vector_ids())
+        missing = [c for c in chunks if c.get("chunk_id") not in existing_ids]
+        if not missing:
+            if chunks and vector_store.count() == 0:
+                print(
+                    "  Warning: SQLite has indexed chunks but the vector index is empty. "
+                    "Re-ingest or set DEMO_FORCE_RESEED=1 once in dev."
+                )
+            return
+
+        texts = [c.get("chunk_text") or "" for c in missing]
+        embeddings = embedder.embed_batch(texts)
+        metadatas = [
+            {
+                "chunk_id": c["chunk_id"],
+                "doc_id": c["doc_id"],
+                "access_level": c["access_level"],
+            }
+            for c in missing
+        ]
+        vector_store.add_chunks(
+            chunk_ids=[c["chunk_id"] for c in missing],
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+        print(f"  Synced {len(missing)} missing vector(s) into the active index")
+    except Exception as e:
+        print(f"  Warning: vector sync failed ({type(e).__name__})")
+
+
 def create_application() -> Tuple[FastAPI, AppConfig]:
     """
     Build and return ``(app, config)`` with all dependencies injected.
@@ -130,6 +205,12 @@ def create_application() -> Tuple[FastAPI, AppConfig]:
         persist_dir=config.chroma_persist_dir, config=config
     )
     embedder = _build_embedder(config)
+    # Load weights before the server accepts traffic so the first chat
+    # does not spend the client timeout downloading the embedding model.
+    try:
+        embedder.embed_text("warmup")
+    except Exception as e:
+        print(f"  Warning: embedder warmup failed ({type(e).__name__})")
 
     # LLM
     llm_provider = create_provider(config)
@@ -158,12 +239,22 @@ def create_application() -> Tuple[FastAPI, AppConfig]:
     ingestion_pipeline = IngestionPipeline(
         repo=repo, vector_store=vector_store, embedder=embedder, config=config
     )
+    _seed_demo_documents(ingestion_pipeline, config)
+    try:
+        stats = reconcile_stale_documents(repo, vector_store)
+        cleaned = stats.get("deleting_cleaned", 0) + stats.get("indexing_failed", 0)
+        if cleaned:
+            print(f"  Reconciled stale documents: {stats}")
+    except Exception as e:
+        print(f"  Warning: stale document reconcile failed ({type(e).__name__})")
+    _sync_missing_vectors(repo, vector_store, embedder)
 
     # FastAPI app
     app = create_app(
         auth_service=auth_service,
         pipeline_orchestrator=pipeline_orchestrator,
         ingestion_pipeline=ingestion_pipeline,
+        policy_engine=policy_engine,
     )
 
     return app, config

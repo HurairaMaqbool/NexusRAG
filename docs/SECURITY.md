@@ -16,20 +16,30 @@ The Secure RAG Platform enforces a 7-control security pipeline on every request:
 3. **Intent Routing** — Deterministic classification into calculator / web_search / document RAG.
 4. **Document Scanner** — YAML-configurable regex scanner for indirect injection in retrieved chunks.
 5. **Policy Engine** — Risk-threshold adjudication (ALLOW / REVIEW / BLOCK) with data-exfiltration rules (Decision D1: HR data never sent to cloud LLM). `role_permissions` from `config/policy.yaml` are enforced for calculator, web search, ingest, and audit dashboard capabilities (fail-closed).
-6. **Output Guard** — Canary token leak detection, system prompt disclosure checks, sensitive data pattern matching (SSN, API keys, emails).
+6. **Output Guard** — Canary token leak detection, system prompt disclosure checks, sensitive data pattern matching (dashed SSN, API keys, credential leaks). Ordinary emails and bare 9-digit numbers are **not** blocked.
 7. **Audit Trail** — Append-only SQLite audit logs with tamper-prevention triggers.
 
 ## RBAC Model
 
-| Role     | Document Access        | Ingest | Audit Dashboard | Calculator | Web Search |
-|----------|------------------------|--------|-----------------|------------|------------|
-| Employee | employee-level only    | No     | No              | Yes        | No         |
-| HR       | employee + HR          | Yes    | No              | Yes        | Yes        |
-| Admin    | None (no doc retrieval)| No     | Yes             | No         | No         |
+| Role     | Document Access        | Ingest | Audit Dashboard | Calculator | Web Search | General Q&A |
+|----------|------------------------|--------|-----------------|------------|------------|-------------|
+| Employee | employee-level only    | No     | No              | Yes        | No         | Yes         |
+| HR       | employee + HR\*        | Yes    | No              | Yes        | Yes\*\*    | Yes         |
+| Admin    | None (no company docs) | No     | Yes             | No (falls through to general Q&A) | No | Yes |
+
+\*With `LLM_PROVIDER=groq`, HR-restricted chunk text is never sent to Groq (D1). The platform tries a local Ollama model when available; otherwise it returns a clear privacy-gate message (it does **not** invent HR salary facts from general knowledge).  
+\*\*Web search also requires `ENABLE_WEB_SEARCH=true` (env). The `enable_web_search` key in `policy.yaml` is documentary only.
+
+## Chatbot UX notes (dev)
+
+- Empty retrieval falls back to **general knowledge** (not a hard “no documents” refusal).
+- `/chat` accepts optional `history` (last few turns) for short conversational context.
+- “Who am I?” is answered from the signed-in session email/role.
+- Streamlit shows an HR tip when the active provider is Groq.
 
 ## Key Security Decisions
 
-- **D1**: HR-classified chunks are NEVER sent to Groq (cloud LLM). Enforced by PolicyEngine.
+- **D1**: HR-classified and unknown-access chunks are NEVER sent to Groq. Cloud-safe levels are `employee`, `public`, and `web` (web-search snippets). Enforced by PolicyEngine.
 - **D9**: Raw session tokens are never persisted — only SHA-256 hashes stored.
 - **D10**: Every session validation re-checks user active status and role from the database.
 - **D11**: Admin role has empty access level list — cannot retrieve documents.

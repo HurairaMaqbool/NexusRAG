@@ -15,6 +15,9 @@ from secure_rag.retrieval.vector_store import ChromaVectorStore
 
 # RRF constant (standard value from Cormack et al.)
 RRF_K = 60
+# Drop dense-only weak neighbors so chit-chat does not force unrelated docs
+# into the LLM. Any positive BM25 hit is kept (lexical evidence).
+MIN_DENSE_ONLY_SCORE = 0.32
 
 
 @dataclass(frozen=True)
@@ -130,10 +133,16 @@ class HybridRetrievalEngine:
                 if c["access_level"].lower() in [lvl.lower() for lvl in allowed_access_levels]:
                     chunk_data[c["chunk_id"]] = c
 
-        # Assemble final results
+        # Assemble final results (relevance-gated)
         results: List[RetrievedChunk] = []
         for cid in sorted_ids:
             if cid not in chunk_data:
+                continue
+            dense = dense_scores.get(cid, 0.0)
+            sparse = sparse_scores.get(cid, 0.0)
+            # Drop only weak *positive* dense-only hits. Score 0 is common with
+            # FakeEmbedder / tiny BM25 corpora and must not wipe results.
+            if sparse <= 0.0 and 0.0 < dense < MIN_DENSE_ONLY_SCORE:
                 continue
             data = chunk_data[cid]
             results.append(RetrievedChunk(
@@ -142,8 +151,8 @@ class HybridRetrievalEngine:
                 text=data.get("chunk_text", ""),
                 source_file=data.get("source_file", data.get("title", "unknown")),
                 access_level=data["access_level"],
-                dense_score=dense_scores.get(cid, 0.0),
-                sparse_score=sparse_scores.get(cid, 0.0),
+                dense_score=dense,
+                sparse_score=sparse,
                 fused_score=round(fused.get(cid, 0.0), 6),
             ))
 

@@ -69,17 +69,21 @@ def test_ingestion_deduplication_same_hash_same_level(pipeline, repo):
     docs = repo.list_documents()
     assert len(docs) == 1
 
-def test_ingestion_deduplication_conflicting_access_level_rejected(pipeline):
+def test_ingestion_deduplication_conflicting_access_level_returns_existing(pipeline):
     """
-    Deduplication security test (Decision D16, B5: doc_duplicate_conflict):
-    Identical hash uploaded with a DIFFERENT access level is rejected as a potential classification conflict / poisoning.
+    Same hash under a different access level returns the existing indexed doc
+    (idempotent UX) and keeps the original classification.
     """
     payload = b"Confidential document content for reclassification test."
-    pipeline.ingest_file(payload, "confidential.txt", "employee", uploader_role="HR")
+    first = pipeline.ingest_file(payload, "confidential.txt", "employee", uploader_role="HR")
 
-    # Attempt re-upload of identical file under 'hr' level
-    with pytest.raises(DuplicateDocumentError, match="conflicting access level"):
-        pipeline.ingest_file(payload, "confidential_reclassified.txt", "hr", uploader_role="HR")
+    second = pipeline.ingest_file(
+        payload, "confidential_reclassified.txt", "hr", uploader_role="HR"
+    )
+    assert second["status"] == "existing"
+    assert second["doc_id"] == first["doc_id"]
+    assert second["access_level"] == "employee"
+    assert "warning" in second
 
 def test_ingestion_two_store_consistency_and_verification(pipeline, repo):
     """

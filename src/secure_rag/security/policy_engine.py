@@ -71,20 +71,23 @@ class PolicyEngine:
     ) -> PolicyEvaluationResult:
         """
         Applies deterministic policy rules:
-        1. Decision D1: If target is Groq and any chunk has access_level != 'employee',
-           return BLOCK with POLICY_VIOLATION.
+        1. Decision D1: If target is Groq and any chunk is not cloud-safe
+           (employee/public/web), return BLOCK with POLICY_VIOLATION.
+           HR and unknown levels never go to Groq.
         2. Risk >= block_threshold → BLOCK with DOC_INJECTION_BLOCKED.
         3. Risk >= review_threshold → REVIEW with DOC_INJECTION_FLAGGED.
         4. Otherwise → ALLOW with ALLOWED_AUTHORIZED_SOURCE.
         """
         chunks = retrieved_chunks or []
 
-        # D1 enforcement: non-employee (and missing) access_levels must NEVER go to Groq.
+        # D1 enforcement: HR/restricted chunks must NEVER go to Groq.
+        # Cloud-safe levels: employee docs + synthetic public/web search context.
         # Fail closed: empty/unknown access_level is treated as restricted.
+        _CLOUD_SAFE = {"employee", "public", "web"}
         if self.prohibit_restricted_to_cloud and target_llm_provider.lower().strip() == "groq":
             for chunk in chunks:
                 access_level = (chunk.get("access_level") or "").lower().strip()
-                if access_level != "employee":
+                if access_level not in _CLOUD_SAFE:
                     label = access_level or "unknown"
                     return PolicyEvaluationResult(
                         decision=DecisionOutcome.BLOCK,
