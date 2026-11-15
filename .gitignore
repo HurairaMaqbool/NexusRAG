@@ -1,5 +1,4 @@
 # Environment & Secrets
-.env
 
 # Database & Vector Storage
 data/*.db
@@ -17,3 +16,5 @@ venv/
 *.egg-info/
 temp_uploads/
 test_run*.txt
+config.bat
+node_modules
